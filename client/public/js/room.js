@@ -26,6 +26,16 @@
 
   currentUserEl.textContent = username;
 
+  // Local media and analysis variables must be declared before
+  // requestMicrophone() is called so that they exist in the scope
+  // captured by that function. Otherwise `localStream` would be in
+  // a temporal dead zone when accessed inside requestMicrophone.
+  let localStream;
+  let localAnalyser;
+  let audioCtx;
+  let localDataArray;
+  let isMuted = false;
+
   // Audio constraints
   const audioConstraints = {
     audio: {
@@ -47,12 +57,6 @@
     return;
   }
 
-  // Local media and analysis
-  let localStream;
-  let localAnalyser;
-  let audioCtx;
-  let localDataArray;
-  let isMuted = false;
   // Hidden container for remote audio elements
   const audioContainer = document.createElement('div');
   audioContainer.id = 'audio-container';

@@ -2,15 +2,15 @@
 document.addEventListener('DOMContentLoaded', () => {
   // Static list of permitted handles; sorted alphabetically
   const names = [
-    'Andromeda',
-    'Aurora',
-    'Cosmos',
-    'Luna',
-    'Nebula',
-    'Nova',
-    'Orion',
-    'Pulsar',
-    'Zenith'
+    'Ali',
+    'Azzo',
+    'Faisal Abdullah',
+    'Faisal Sulaiman',
+    'Mishari',
+    'Moayad',
+    'Noufi',
+    'Yasser',
+    'Ziyad'
   ];
 
   const list = document.getElementById('name-list');
