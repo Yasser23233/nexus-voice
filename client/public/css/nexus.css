@@ -1,0 +1,159 @@
+/*
+ * Nexus Voice – Dark gold hacker theme
+ *
+ * This stylesheet defines the look and feel for both the lobby and room pages.
+ * It uses a dark background with gold accents, monospaced typography and
+ * subtle animations to achieve a futuristic hacker aesthetic. Peer names
+ * highlight when speaking and the current user is outlined in gold.
+ */
+
+:root {
+  --bg-color: #050505;
+  --panel-color: #0f0f0f;
+  --fg-color: #cfae48;
+  --accent-color: #d9b349;
+  --border-radius: 4px;
+}
+
+html, body {
+  height: 100%;
+  margin: 0;
+  padding: 0;
+  font-family: 'Roboto Mono', monospace;
+  background-color: var(--bg-color);
+  color: var(--fg-color);
+  overflow-x: hidden;
+}
+
+.container {
+  max-width: 600px;
+  margin: 0 auto;
+  padding: 2rem 1rem;
+  text-align: center;
+}
+
+.header {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  margin-bottom: 1rem;
+}
+
+.logo {
+  width: 80px;
+  height: 80px;
+  margin-bottom: 0.5rem;
+  animation: glow 3s infinite alternate;
+}
+
+.app-title {
+  margin: 0;
+  font-size: 2rem;
+  font-weight: 700;
+  letter-spacing: 1px;
+  position: relative;
+  animation: glitch 3s infinite;
+}
+
+.instruction {
+  margin: 1rem 0;
+  font-size: 1rem;
+}
+
+.name-list,
+.peer-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.name-list li,
+.peer-list li {
+  background-color: var(--panel-color);
+  border: 1px solid var(--accent-color);
+  border-radius: var(--border-radius);
+  padding: 0.75rem 1rem;
+  margin: 0.25rem 0;
+  cursor: pointer;
+  transition: background-color 0.3s, color 0.3s, box-shadow 0.3s;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.name-list li:hover {
+  background-color: var(--accent-color);
+  color: var(--bg-color);
+}
+
+/* Speaking indicator: subtle glow around speaking peers */
+.peer-list li.peer-speaking {
+  box-shadow: 0 0 8px var(--accent-color);
+}
+
+/* Highlight the current user with a thicker border */
+.peer-list li.peer-self {
+  border-width: 2px;
+}
+
+.controls {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 0.5rem;
+  margin-bottom: 1rem;
+}
+
+.control-btn {
+  background-color: var(--panel-color);
+  border: 1px solid var(--accent-color);
+  border-radius: var(--border-radius);
+  color: var(--fg-color);
+  padding: 0.5rem 1rem;
+  cursor: pointer;
+  transition: background-color 0.3s, color 0.3s;
+  font-size: 0.9rem;
+}
+
+.control-btn:hover {
+  background-color: var(--accent-color);
+  color: var(--bg-color);
+}
+
+.current-user {
+  display: inline-block;
+  font-weight: bold;
+  margin-top: 0.5rem;
+}
+
+@keyframes glow {
+  from {
+    filter: drop-shadow(0 0 4px var(--accent-color));
+  }
+  to {
+    filter: drop-shadow(0 0 12px var(--accent-color));
+  }
+}
+
+/* Simple glitch animation for the title */
+@keyframes glitch {
+  0% {
+    text-shadow: 2px 2px 0 #d9b349, -2px -2px 0 #714f1b;
+  }
+  20% {
+    text-shadow: -2px 2px 0 #d9b349, 2px -2px 0 #714f1b;
+  }
+  40% {
+    text-shadow: 2px -2px 0 #d9b349, -2px 2px 0 #714f1b;
+  }
+  60% {
+    text-shadow: -2px -2px 0 #d9b349, 2px 2px 0 #714f1b;
+  }
+  80% {
+    text-shadow: 2px 2px 0 #714f1b, -2px -2px 0 #d9b349;
+  }
+  100% {
+    text-shadow: 0 0 0 #000;
+  }
+}
