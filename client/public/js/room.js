@@ -10,10 +10,9 @@
  * chosen user name and replacing audio tracks on the fly.
  */
 
-(function () {
+(async function () {
   const username = sessionStorage.getItem('username');
   if (!username) {
-    // If no username is stored, redirect back to lobby
     window.location.href = '/';
     return;
   }
@@ -33,69 +32,48 @@
   let localDataArray;
   let isMuted = false;
 
-  // Peer connections keyed by peerId
-  const peers = {};
+  const audioContainer = document.createElement('div');
+  audioContainer.id = 'audio-container';
+  audioContainer.style.display = 'none';
+  document.body.appendChild(audioContainer);
 
-  // Signalling via Socket.IO
+  // Peer connections
+  const peers = {};
   const socket = io();
   let myPeerId = null;
   let iceServers = [];
   let icePolicy = 'all';
 
-  // Audio constraints
-  const audioConstraints = {
-    audio: {
-      autoGainControl: true,
-      noiseSuppression: true,
-      echoCancellation: true
-    },
-    video: false
-  };
-
-  // Utility to update speaking indicator on the UI
-  function setSpeaking(peerId, speaking) {
-    const item = peerListEl.querySelector(`[data-peer-id="${peerId}"]`);
-    if (item) {
-      if (speaking) item.classList.add('peer-speaking');
-      else item.classList.remove('peer-speaking');
+  // Microphone initialization (fix: request basic audio then apply constraints)
+  async function requestMicrophone() {
+    if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+      alert('المتصفح لا يدعم الوصول إلى الميكروفون.');
+      throw new Error('getUserMedia not supported');
     }
-  }
+    try {
+      // Basic audio request
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
 
-  // Render the entire peer list
-  function renderPeerList(list) {
-    peerListEl.innerHTML = '';
-    list.forEach(({ peerId, name }) => {
-      const li = document.createElement('li');
-      li.dataset.peerId = peerId;
-      li.textContent = name;
-      if (peerId === myPeerId) {
-        li.classList.add('peer-self');
+      // Try applying advanced constraints if supported
+      const [track] = stream.getAudioTracks();
+      if (track && track.getCapabilities) {
+        const caps = track.getCapabilities();
+        const wanted = { autoGainControl: true, echoCancellation: true, noiseSuppression: true };
+        const supported = {};
+        for (const k in wanted) if (caps[k] !== undefined) supported[k] = wanted[k];
+        if (Object.keys(supported).length) {
+          await track.applyConstraints(supported);
+        }
       }
-      peerListEl.appendChild(li);
-    });
-  }
 
-  // Add a single peer to the list if not already present
-  function addPeerToList(peerId, name) {
-    let li = peerListEl.querySelector(`[data-peer-id="${peerId}"]`);
-    if (!li) {
-      li = document.createElement('li');
-      li.dataset.peerId = peerId;
-      li.textContent = name;
-      peerListEl.appendChild(li);
-    }
-    if (peerId === myPeerId) {
-      li.classList.add('peer-self');
+      localStream = stream;
+    } catch (err) {
+      alert('حدث خطأ في الوصول إلى الميكروفون: ' + err.message);
+      throw err;
     }
   }
 
-  // Remove a peer from the list
-  function removePeerFromList(peerId) {
-    const li = peerListEl.querySelector(`[data-peer-id="${peerId}"]`);
-    if (li) li.remove();
-  }
-
-  // Start analysing local audio for speaking detection
+  // Start local speaking detection
   function startLocalAnalysis(stream) {
     audioCtx = new (window.AudioContext || window.webkitAudioContext)();
     localAnalyser = audioCtx.createAnalyser();
@@ -106,9 +84,7 @@
     function analyse() {
       localAnalyser.getByteFrequencyData(localDataArray);
       let sum = 0;
-      for (let i = 0; i < localDataArray.length; i++) {
-        sum += localDataArray[i];
-      }
+      for (let i = 0; i < localDataArray.length; i++) sum += localDataArray[i];
       const level = sum / localDataArray.length;
       setSpeaking(myPeerId, level > 40);
       requestAnimationFrame(analyse);
@@ -116,7 +92,7 @@
     analyse();
   }
 
-  // Analyse remote audio stream for a peer
+  // Analyse remote peer speaking
   function analyseRemote(peerId, stream) {
     const ctx = new (window.AudioContext || window.webkitAudioContext)();
     const analyser = ctx.createAnalyser();
@@ -135,19 +111,46 @@
     analyse();
   }
 
-  // Acquire microphone access
-  async function acquireMicrophone() {
-    try {
-      const stream = await navigator.mediaDevices.getUserMedia(audioConstraints);
-      localStream = stream;
-      startLocalAnalysis(stream);
-    } catch (err) {
-      console.error('Failed to acquire microphone:', err);
-      alert('تعذر الوصول إلى الميكروفون. يرجى السماح بالأذونات والمحاولة مجددًا.');
+  // Update UI speaking indicator
+  function setSpeaking(peerId, speaking) {
+    const item = peerListEl.querySelector(`[data-peer-id="${peerId}"]`);
+    if (item) {
+      if (speaking) item.classList.add('peer-speaking');
+      else item.classList.remove('peer-speaking');
     }
   }
 
-  // Replace the audio track on all peer connections with a new track
+  // Render peer list
+  function renderPeerList(list) {
+    peerListEl.innerHTML = '';
+    list.forEach(({ peerId, name }) => {
+      const li = document.createElement('li');
+      li.dataset.peerId = peerId;
+      li.textContent = name;
+      if (peerId === myPeerId) li.classList.add('peer-self');
+      peerListEl.appendChild(li);
+    });
+  }
+
+  // Add peer to list
+  function addPeerToList(peerId, name) {
+    let li = peerListEl.querySelector(`[data-peer-id="${peerId}"]`);
+    if (!li) {
+      li = document.createElement('li');
+      li.dataset.peerId = peerId;
+      li.textContent = name;
+      peerListEl.appendChild(li);
+    }
+    if (peerId === myPeerId) li.classList.add('peer-self');
+  }
+
+  // Remove peer
+  function removePeerFromList(peerId) {
+    const li = peerListEl.querySelector(`[data-peer-id="${peerId}"]`);
+    if (li) li.remove();
+  }
+
+  // Replace audio track in active peers
   function replaceTrack(newTrack) {
     Object.values(peers).forEach(({ pc }) => {
       pc.getSenders().forEach((sender) => {
@@ -158,14 +161,12 @@
     });
   }
 
-  // Handle device changes (e.g. user plugged in a new microphone)
+  // Handle device change
   navigator.mediaDevices.addEventListener('devicechange', async () => {
     try {
-      const newStream = await navigator.mediaDevices.getUserMedia(audioConstraints);
+      const newStream = await navigator.mediaDevices.getUserMedia({ audio: true });
       const newTrack = newStream.getAudioTracks()[0];
-      // Replace the track on all senders
       replaceTrack(newTrack);
-      // Stop old tracks and update the local reference
       localStream.getTracks().forEach((t) => t.stop());
       localStream = newStream;
       startLocalAnalysis(newStream);
@@ -174,17 +175,24 @@
     }
   });
 
-  // Create a new RTCPeerConnection for a remote peer
+  // Create PeerConnection
   function createPeerConnection(remotePeerId) {
     const pc = new RTCPeerConnection({
       iceServers: iceServers,
       iceTransportPolicy: icePolicy
     });
-    // Add the local audio track to the connection
+
     if (localStream) {
-      localStream.getTracks().forEach((track) => pc.addTrack(track, localStream));
+      const track = localStream.getAudioTracks()[0];
+      try {
+        pc.addTrack(track, localStream);
+      } catch (err) {
+        pc.getSenders().forEach((sender) => {
+          if (sender.track && sender.track.kind === 'audio') sender.replaceTrack(track);
+        });
+      }
     }
-    // Relay candidates to the remote peer
+
     pc.onicecandidate = (event) => {
       if (event.candidate) {
         socket.emit('signal', {
@@ -193,16 +201,26 @@
         });
       }
     };
-    // When a remote track arrives, start analysing it
+
     pc.ontrack = (event) => {
       const [stream] = event.streams;
+      let audioEl = peers[remotePeerId] && peers[remotePeerId].audio;
+      if (!audioEl) {
+        audioEl = document.createElement('audio');
+        audioEl.autoplay = true;
+        audioEl.muted = false;
+        audioContainer.appendChild(audioEl);
+        if (peers[remotePeerId]) peers[remotePeerId].audio = audioEl;
+      }
+      audioEl.srcObject = stream;
+      audioEl.play().catch(() => {});
       analyseRemote(remotePeerId, stream);
     };
+
     return pc;
   }
 
-  // Start negotiating with a remote peer. If createOffer is true, this peer
-  // initiates the offer; otherwise it waits for the offer.
+  // Ensure PeerConnection
   async function ensurePeerConnection(remotePeerId, remoteName, createOffer = false) {
     if (!peers[remotePeerId]) {
       peers[remotePeerId] = {
@@ -225,44 +243,38 @@
     }
   }
 
-  // Socket.IO event handlers
-  socket.on('welcome', async ({ peerId, iceServers: servers, icePolicy: policy }) => {
+  // Socket handlers
+  socket.on('welcome', ({ peerId, iceServers: servers, icePolicy: policy }) => {
     myPeerId = peerId;
     iceServers = servers || [];
     icePolicy = policy || 'all';
-    // Acquire microphone before joining
-    await acquireMicrophone();
-    // Now announce ourselves to the server
+    if (localStream) startLocalAnalysis(localStream);
     socket.emit('join', { name: username });
   });
 
   socket.on('peer-list', (list) => {
-    // Render the full list in the UI
     renderPeerList(list);
-    // For each peer create or update a connection
     list.forEach(({ peerId, name }) => {
       if (peerId === myPeerId) return;
       addPeerToList(peerId, name);
-      // If we don't have a connection yet, this client will initiate
-      if (!peers[peerId]) {
-        ensurePeerConnection(peerId, name, true);
-      }
+      if (!peers[peerId]) ensurePeerConnection(peerId, name, true);
     });
   });
 
   socket.on('peer-joined', ({ peerId, name }) => {
     addPeerToList(peerId, name);
-    // Initiate a connection to the new peer
     ensurePeerConnection(peerId, name, true);
   });
 
   socket.on('peer-left', ({ peerId }) => {
-    // Remove the peer from the UI
     removePeerFromList(peerId);
-    // Close and delete the peer connection
     const entry = peers[peerId];
     if (entry) {
       entry.pc.close();
+      if (entry.audio && entry.audio.parentNode) {
+        entry.audio.srcObject = null;
+        entry.audio.parentNode.removeChild(entry.audio);
+      }
       delete peers[peerId];
     }
   });
@@ -278,7 +290,6 @@
     const pc = entry.pc;
     try {
       if (data.type === 'offer') {
-        // Remote peer is initiating; set remote description and answer
         await pc.setRemoteDescription(new RTCSessionDescription(data));
         const answer = await pc.createAnswer();
         await pc.setLocalDescription(answer);
@@ -296,11 +307,8 @@
     }
   });
 
-  // Re-join on reconnection
   socket.io.on('reconnect', () => {
-    if (username) {
-      socket.emit('join', { name: username });
-    }
+    if (username) socket.emit('join', { name: username });
   });
 
   // UI interactions
@@ -325,4 +333,11 @@
       console.error('Copy to clipboard failed:', err);
     }
   });
+
+  // Initialize microphone before connecting
+  try {
+    await requestMicrophone();
+  } catch (_) {
+    return;
+  }
 })();

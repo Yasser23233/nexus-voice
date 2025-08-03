@@ -10,8 +10,11 @@ set -euo pipefail
 
 # Export variables from .env if it exists
 if [ -f .env ]; then
-  # shellcheck disable=SC1091
-  export $(grep -v '^#' .env | xargs -0)
+  # Export variables from the .env file into the environment. The set -o
+  # allexport directive automatically exports all sourced variables.
+  set -o allexport
+  . ./.env
+  set +o allexport
 fi
 
 # Check Node version and required environment variables
