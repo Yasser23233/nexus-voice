@@ -35,6 +35,8 @@ function registerSockets(io) {
       clients.set(socket.id, { peerId, name });
       peerToSocket.set(peerId, socket.id);
 
+      console.log(`peer ${peerId} joined as ${name}`);
+
       // Send the list of all current peers to the new user
       const peerList = Array.from(clients.values()).map((c) => ({
         peerId: c.peerId,
@@ -50,6 +52,8 @@ function registerSockets(io) {
     socket.on('signal', ({ targetPeerId, data }) => {
       const targetSocketId = peerToSocket.get(targetPeerId);
       if (targetSocketId) {
+        const type = data && data.type ? data.type : (data.candidate ? 'candidate' : 'unknown');
+        console.log(`relay signal from ${peerId} to ${targetPeerId} (${type})`);
         io.to(targetSocketId).emit('signal', {
           from: peerId,
           data
@@ -63,6 +67,7 @@ function registerSockets(io) {
       if (clientInfo) {
         clients.delete(socket.id);
         peerToSocket.delete(clientInfo.peerId);
+        console.log(`peer ${clientInfo.peerId} disconnected`);
         // Inform other peers that this peer has left
         socket.broadcast.emit('peer-left', { peerId: clientInfo.peerId });
       }
