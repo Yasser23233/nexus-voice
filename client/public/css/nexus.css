@@ -53,9 +53,18 @@ html, body {
   font-weight: 700;
   letter-spacing: 1px;
   position: relative;
-  /* The base title uses a subtle glow. Individual letters will
-     override this via the .neon-letter class when the neon effect
-     script runs. */
+  /*
+   * Force left‑to‑right rendering for Latin characters when the
+   * surrounding document is right‑to‑left. Without this override the
+   * letters in "Nexus Voice" would render backwards when the page
+   * sets dir="rtl" on the html element. Applying an explicit
+   * direction and unicode‑bidi override here preserves the correct
+   * order of letters regardless of the page direction.
+   */
+  direction: ltr;
+  unicode-bidi: bidi-override;
+  /* A subtle glow on the title text. Individual letters will inherit
+     their own glow from the .neon-letter class. */
   text-shadow: 0 0 6px var(--accent-color);
 }
 
@@ -64,30 +73,45 @@ html, body {
    neon sign.  The animation toggles opacity and text-shadow to
    achieve the flashing look. We rely on JavaScript to assign a
    random animation delay to each .neon-letter element. */
+/*
+ * Each letter in the application title is wrapped in a .neon-letter span.
+ * By default we avoid any built‑in animation here; the letters
+ * simply inherit a constant glow from the parent. Random glitches
+ * are injected via JavaScript instead of CSS animations to give
+ * greater control over timing. See lobby.js and room.js for details.
+ */
 .neon-letter {
   display: inline-block;
-  animation-name: neonFlash;
-  animation-duration: 4s;
-  animation-iteration-count: infinite;
-  animation-timing-function: linear;
+  /* Base glow for each letter */
+  text-shadow: 0 0 8px var(--accent-color), 0 0 12px var(--accent-color);
 }
 
+/* When the glitch script marks a letter as off, temporarily remove
+   its visibility and glow. A low opacity is used rather than fully
+   transparent so the letter still occupies space and prevents
+   reflow. */
+.neon-letter.glitch-off {
+  opacity: 0.05;
+  text-shadow: none;
+}
+
+/*
+ * Retain the definition of the neonFlash keyframes for backward
+ * compatibility. Even though we no longer apply this animation to
+ * letters directly, other parts of the stylesheet may still refer
+ * to it. By stretching the visible period to cover almost the entire
+ * timeline the effect becomes imperceptible unless explicitly used
+ * elsewhere. Should another element choose to apply this animation
+ * the glitch will occur very rarely.
+ */
 @keyframes neonFlash {
-  0%, 78%, 100% {
+  0%, 99% {
     opacity: 1;
     text-shadow: 0 0 8px var(--accent-color), 0 0 12px var(--accent-color);
   }
-  80%, 82% {
-    opacity: 0.4;
+  99.5%, 100% {
+    opacity: 0.2;
     text-shadow: none;
-  }
-  84%, 86% {
-    opacity: 0.8;
-    text-shadow: 0 0 4px var(--accent-color);
-  }
-  88%, 90% {
-    opacity: 1;
-    text-shadow: 0 0 10px var(--accent-color);
   }
 }
 
@@ -199,8 +223,17 @@ html, body {
    sizes. Remove any media query hiding copy-link. */
 
 /* Speaking indicator: subtle glow around speaking peers */
+/*
+ * When a participant is speaking we highlight their entry. Use a
+ * green border and glow rather than the default gold to clearly
+ * distinguish active speech. The .peer-speaking class is added and
+ * removed dynamically by the client JavaScript based on audio
+ * analysis. On small screens this still renders with an obvious
+ * contrast without overwhelming the dark theme.
+ */
 .peer-list li.peer-speaking {
-  box-shadow: 0 0 8px var(--accent-color);
+  border-color: #2ecc71;
+  box-shadow: 0 0 8px #2ecc71;
 }
 
 /* When a peer is muted dim their name text */

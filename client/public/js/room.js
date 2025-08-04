@@ -26,6 +26,32 @@
 
   currentUserEl.textContent = username;
 
+  /*
+   * Maintain a list of all AudioContext instances created during the
+   * lifetime of this page. Mobile browsers require a user gesture to
+   * start audio playback. By registering a one‑off click/touch handler
+   * that resumes all contexts we ensure that local analysis, noise
+   * gating and remote analysis all begin processing as soon as the
+   * user interacts with the page. Without this many mobile devices
+   * (particularly Safari on iOS) will remain silent until the user
+   * explicitly interacts with the page, leading to confusion.
+   */
+  const audioContexts = [];
+  function unlockAudio() {
+    audioContexts.forEach((ctx) => {
+      try {
+        if (ctx && typeof ctx.resume === 'function' && ctx.state !== 'running') {
+          ctx.resume().catch(() => {});
+        }
+      } catch (_) {}
+    });
+    document.body.removeEventListener('touchstart', unlockAudio);
+    document.body.removeEventListener('click', unlockAudio);
+  }
+  // Use once:true to ensure the handler fires a single time on first interaction
+  document.body.addEventListener('touchstart', unlockAudio, { once: true });
+  document.body.addEventListener('click', unlockAudio, { once: true });
+
   /**
    * Apply a flashing neon effect to the main title. Wrap each
    * character in a span with the class .neon-letter and set a
@@ -54,6 +80,32 @@
   }
 
   applyNeonEffect();
+
+  /**
+   * Introduce occasional letter glitches into the title. Every 8–12
+   * seconds a single random letter will dim briefly to simulate a
+   * failing neon tube. This implementation is identical to the
+   * function in lobby.js to ensure a consistent effect across pages.
+   */
+  function initGlitch() {
+    const letters = document.querySelectorAll('.app-title .neon-letter');
+    if (!letters.length) return;
+    let timer;
+    const trigger = () => {
+      const idx = Math.floor(Math.random() * letters.length);
+      const el = letters[idx];
+      el.classList.add('glitch-off');
+      setTimeout(() => {
+        el.classList.remove('glitch-off');
+      }, 300);
+      const delay = 8000 + Math.random() * 4000;
+      timer = setTimeout(trigger, delay);
+    };
+    const initialDelay = 4000 + Math.random() * 4000;
+    timer = setTimeout(trigger, initialDelay);
+  }
+
+  initGlitch();
 
   // Local media and analysis variables must be declared before
   // requestMicrophone() is called so that they exist in the scope
@@ -213,8 +265,13 @@
   // Start analysing local audio for speaking detection
   function startLocalAnalysis(stream) {
     audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+    // Keep track of this context so we can resume it on the first user
+    // interaction (required on mobile browsers).
+    audioContexts.push(audioCtx);
     localAnalyser = audioCtx.createAnalyser();
-    localAnalyser.fftSize = 512;
+    // Use a smaller FFT size to improve responsiveness and reduce
+    // perceived delay in the speaking indicator.
+    localAnalyser.fftSize = 256;
     localDataArray = new Uint8Array(localAnalyser.frequencyBinCount);
     const source = audioCtx.createMediaStreamSource(stream);
     source.connect(localAnalyser);
@@ -225,26 +282,48 @@
         sum += localDataArray[i];
       }
       const level = sum / localDataArray.length;
-      setSpeaking(myPeerId, level > 40);
+      // Raise the threshold slightly to avoid constant triggering from
+      // ambient noise. A threshold around 50 works well with our 256
+      // point FFT.
+      setSpeaking(myPeerId, level > 50);
       requestAnimationFrame(analyse);
     }
     analyse();
+
+    // Ensure the audio context is running. Some browsers start new
+    // AudioContext instances in a suspended state until resumed. By
+    // calling resume() here we guarantee immediate operation on
+    // platforms that allow it, while the unlockAudio handler will
+    // resume contexts on user interaction where required.
+    audioCtx.resume().catch(() => {});
   }
 
   // Analyse remote audio stream for a peer
   function analyseRemote(peerId, stream) {
     const ctx = new (window.AudioContext || window.webkitAudioContext)();
+    // Keep a reference for unlocking on mobile
+    audioContexts.push(ctx);
     const analyser = ctx.createAnalyser();
-    analyser.fftSize = 512;
+    // Use a smaller FFT size for reduced latency on remote streams
+    analyser.fftSize = 256;
     const dataArray = new Uint8Array(analyser.frequencyBinCount);
     const source = ctx.createMediaStreamSource(stream);
     source.connect(analyser);
+    // Resume the context immediately; some browsers will otherwise
+    // suspend the processing graph until a user gesture occurs. The
+    // unlockAudio handler will also call resume() again later, but
+    // calling it here ensures speaking indicators start as soon as
+    // possible on platforms where it is allowed.
+    ctx.resume().catch(() => {});
     function analyse() {
       analyser.getByteFrequencyData(dataArray);
       let sum = 0;
       for (let i = 0; i < dataArray.length; i++) sum += dataArray[i];
       const level = sum / dataArray.length;
-      setSpeaking(peerId, level > 40);
+      // Increase the threshold slightly to reduce false positives from
+      // ambient noise. A value around 50 works well with the smaller
+      // window.
+      setSpeaking(peerId, level > 50);
       requestAnimationFrame(analyse);
     }
     analyse();
@@ -272,11 +351,16 @@
       async function createNoiseGate(micStream) {
         try {
           const ctx = new (window.AudioContext || window.webkitAudioContext)();
-          // Use a small FFT size (~512 samples) corresponding to ~10 ms
-          // frames at 48 kHz. This improves responsiveness and keeps
-          // latency low.
+          // Keep track of all AudioContext instances for later unlocking on
+          // mobile devices. Without pushing the context here it will remain
+          // suspended until a user gesture occurs, which would mute
+          // participants completely on some platforms.
+          audioContexts.push(ctx);
+          // Use a smaller FFT size (~256 samples) to reduce latency and
+          // improve gate responsiveness. At a 48 kHz sample rate this
+          // represents roughly 5 ms frames.
           const analyser = ctx.createAnalyser();
-          analyser.fftSize = 512;
+          analyser.fftSize = 256;
           const source = ctx.createMediaStreamSource(micStream);
           const gainNode = ctx.createGain();
           source.connect(gainNode);
@@ -299,15 +383,19 @@
             if (calibrating) {
               baseline += rms;
               frameCount++;
-              // Calibrate for the first ~300 ms (30 frames of 10 ms)
-              if (frameCount > 30) {
+              // Calibrate for roughly 100 ms (20 frames of 5 ms)
+              if (frameCount > 20) {
                 baseline = baseline / frameCount;
                 calibrating = false;
               }
             }
-            const threshold = baseline * 1.5;
+            // Compute a dynamic threshold slightly above the noise floor.
+            const threshold = baseline * 1.3;
+            // When disabled always pass through. When enabled pass
+            // through only when the current RMS exceeds the threshold.
             const targetGain = !enabled || rms > threshold ? 1 : 0;
-            gainNode.gain.setTargetAtTime(targetGain, ctx.currentTime, 0.02);
+            // Use a small time constant to avoid audible pumping.
+            gainNode.gain.setTargetAtTime(targetGain, ctx.currentTime, 0.01);
             requestAnimationFrame(update);
           }
           update();
@@ -361,51 +449,62 @@
       const newStream = await navigator.mediaDevices.getUserMedia(audioConstraints);
       // Apply a new noise gate to the replaced stream
       noiseGateController = await (async () => {
-        // Use the same createNoiseGate function defined above
-        const ctx = new (window.AudioContext || window.webkitAudioContext)();
-        const analyser = ctx.createAnalyser();
-        analyser.fftSize = 512;
-        const source = ctx.createMediaStreamSource(newStream);
-        const gainNode = ctx.createGain();
-        source.connect(gainNode);
-        gainNode.connect(analyser);
-        const dest = ctx.createMediaStreamDestination();
-        gainNode.connect(dest);
-        const data = new Uint8Array(analyser.fftSize);
-        let baseline = 0;
-        let frameCount = 0;
-        let calibrating = true;
-        let enabled = noiseEnabled;
-        function update() {
-          analyser.getByteTimeDomainData(data);
-          let sumSquares = 0;
-          for (let i = 0; i < data.length; i++) {
-            const v = (data[i] - 128) / 128;
-            sumSquares += v * v;
-          }
-          const rms = Math.sqrt(sumSquares / data.length);
-          if (calibrating) {
-            baseline += rms;
-            frameCount++;
-            if (frameCount > 30) {
-              baseline = baseline / frameCount;
-              calibrating = false;
+        try {
+          const ctx = new (window.AudioContext || window.webkitAudioContext)();
+          // Track context for unlocking on mobile
+          audioContexts.push(ctx);
+          const analyser = ctx.createAnalyser();
+          analyser.fftSize = 256;
+          const source = ctx.createMediaStreamSource(newStream);
+          const gainNode = ctx.createGain();
+          source.connect(gainNode);
+          gainNode.connect(analyser);
+          const dest = ctx.createMediaStreamDestination();
+          gainNode.connect(dest);
+          const data = new Uint8Array(analyser.fftSize);
+          let baseline = 0;
+          let frameCount = 0;
+          let calibrating = true;
+          let enabled = noiseEnabled;
+          function update() {
+            analyser.getByteTimeDomainData(data);
+            let sumSquares = 0;
+            for (let i = 0; i < data.length; i++) {
+              const v = (data[i] - 128) / 128;
+              sumSquares += v * v;
             }
+            const rms = Math.sqrt(sumSquares / data.length);
+            if (calibrating) {
+              baseline += rms;
+              frameCount++;
+              // Calibrate for approximately 100 ms
+              if (frameCount > 20) {
+                baseline = baseline / frameCount;
+                calibrating = false;
+              }
+            }
+            const threshold = baseline * 1.3;
+            const targetGain = !enabled || rms > threshold ? 1 : 0;
+            gainNode.gain.setTargetAtTime(targetGain, ctx.currentTime, 0.01);
+            requestAnimationFrame(update);
           }
-          const threshold = baseline * 1.5;
-          const targetGain = !enabled || rms > threshold ? 1 : 0;
-          gainNode.gain.setTargetAtTime(targetGain, ctx.currentTime, 0.02);
-          requestAnimationFrame(update);
+          update();
+          ctx.resume().catch(() => {});
+          return {
+            processed: dest.stream,
+            enable(flag) {
+              enabled = flag;
+            },
+            ctx
+          };
+        } catch (e) {
+          console.warn('Noise gate setup failed', e);
+          return {
+            processed: newStream,
+            enable() {},
+            ctx: null
+          };
         }
-        update();
-        ctx.resume().catch(() => {});
-        return {
-          processed: dest.stream,
-          enable(flag) {
-            enabled = flag;
-          },
-          ctx
-        };
       })();
       const gated = noiseGateController.processed;
       // Replace the track on all senders

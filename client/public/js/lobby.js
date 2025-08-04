@@ -99,4 +99,36 @@ document.addEventListener('DOMContentLoaded', () => {
   }
 
   applyNeonEffect();
+
+  /**
+   * Introduce an occasional glitch to the app title. Rather than
+   * continuous flickering, we pick a single letter at random every
+   * 8–12 seconds and briefly dim it to simulate a malfunctioning neon
+   * segment. The letter remains partially visible to avoid layout
+   * shifts. Once the effect finishes the next glitch is scheduled.
+   */
+  function initGlitch() {
+    const letters = document.querySelectorAll('.app-title .neon-letter');
+    if (!letters.length) return;
+    let timer;
+    const trigger = () => {
+      // Select a random index among the existing letters
+      const idx = Math.floor(Math.random() * letters.length);
+      const el = letters[idx];
+      el.classList.add('glitch-off');
+      // After a short duration restore the letter
+      setTimeout(() => {
+        el.classList.remove('glitch-off');
+      }, 300);
+      // Schedule the next glitch between 8 and 12 seconds
+      const delay = 8000 + Math.random() * 4000;
+      timer = setTimeout(trigger, delay);
+    };
+    // Kick off the first glitch after a random initial delay to avoid
+    // synchronisation across clients
+    const initialDelay = 4000 + Math.random() * 4000;
+    timer = setTimeout(trigger, initialDelay);
+  }
+
+  initGlitch();
 });
