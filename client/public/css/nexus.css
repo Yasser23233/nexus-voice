@@ -82,6 +82,61 @@ html, body {
   justify-content: space-between;
 }
 
+/* Indicate that a name is already taken in the lobby. Dim the text and
+   show a green status dot. Disable pointer events to prevent clicks. */
+.name-list li.online {
+  color: #555;
+  cursor: default;
+  opacity: 0.6;
+  pointer-events: none;
+}
+.name-list li.online::before {
+  content: '●';
+  color: #00c853;
+  margin-left: 0.5rem;
+}
+
+/* Hide the copy-link button on small screens */
+@media (max-width: 600px) {
+  #copy-link {
+    display: none;
+  }
+}
+
+/* Hide the deprecated mute indicator on peer list items. We now use a
+   dedicated span element (.mute-indicator) added via JavaScript to
+   display mute status. */
+/* .peer-list li.peer-muted::after { ... } removed */
+
+/* Disabled names in the lobby cannot be selected */
+.name-list li.disabled {
+  opacity: 0.5;
+  cursor: default;
+  pointer-events: none;
+}
+
+/* Small dot indicating online status */
+.status-dot {
+  display: inline-block;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  margin-left: 0.5rem;
+  background-color: #555;
+}
+
+/* When a user is online, the dot turns green */
+.name-list li.online .status-dot {
+  background-color: #00c853;
+}
+
+/* Mute indicator next to peer names */
+.mute-indicator {
+  margin-left: 0.5rem;
+  font-size: 0.9rem;
+  color: #d50000; /* red for mute */
+}
+
 .name-list li:hover {
   background-color: var(--accent-color);
   color: var(--bg-color);
@@ -125,6 +180,17 @@ html, body {
   display: inline-block;
   font-weight: bold;
   margin-top: 0.5rem;
+}
+
+/* Responsive design: adjust layout and hide copy link on small screens */
+@media (max-width: 600px) {
+  .container {
+    padding: 1rem 0.5rem;
+    max-width: 100%;
+  }
+  #copy-link {
+    display: none;
+  }
 }
 
 @keyframes glow {

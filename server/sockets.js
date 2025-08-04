@@ -12,11 +12,14 @@ const { ICE_SERVERS, ICE_POLICY } = require('./config');
  * remaining peers so they can close their connections.
  */
 
+// Maintain a list of connected clients at the module level so that
+// other parts of the server (e.g. HTTP routes) can introspect who
+// is online. Each entry maps socket.id -> { peerId, name }.
+const clients = new Map();
+// Map peerId -> socket.id for quick signalling lookup
+const peerToSocket = new Map();
+
 function registerSockets(io) {
-  // Map socket.id -> { peerId, name }
-  const clients = new Map();
-  // Map peerId -> socket.id
-  const peerToSocket = new Map();
 
   io.on('connection', (socket) => {
     // Assign a unique peerId to this socket
@@ -29,8 +32,23 @@ function registerSockets(io) {
       icePolicy: ICE_POLICY
     });
 
+    // Send the current presence list to any newly connected socket. This
+    // allows the lobby to display which names are already in use.
+    {
+      const presenceList = Array.from(clients.values()).map((c) => ({ peerId: c.peerId, name: c.name }));
+      socket.emit('presence', presenceList);
+    }
+
     // Handle the join event once the user has selected a name
     socket.on('join', ({ name }) => {
+      // If the chosen name is already taken by an existing client, refuse to join
+      for (const { name: existingName } of clients.values()) {
+        if (existingName === name) {
+          socket.emit('join-error', { message: 'الاسم مستخدم بالفعل. اختر اسماً آخر.' });
+          return;
+        }
+      }
+
       // Save the peer data
       clients.set(socket.id, { peerId, name });
       peerToSocket.set(peerId, socket.id);
@@ -46,6 +64,12 @@ function registerSockets(io) {
 
       // Let everyone else know that a new peer has joined
       socket.broadcast.emit('peer-joined', { peerId, name });
+
+      // Broadcast updated presence list to all clients (including lobby)
+      {
+        const presenceList = Array.from(clients.values()).map((c) => ({ peerId: c.peerId, name: c.name }));
+        io.emit('presence', presenceList);
+      }
     });
 
     // Relay signalling data between peers
@@ -61,6 +85,14 @@ function registerSockets(io) {
       }
     });
 
+    // Receive mute state from clients and broadcast it to everyone
+    socket.on('mute', ({ muted }) => {
+      const clientInfo = clients.get(socket.id);
+      if (clientInfo) {
+        io.emit('mute', { peerId: clientInfo.peerId, muted });
+      }
+    });
+
     // Clean up when a user disconnects
     socket.on('disconnect', () => {
       const clientInfo = clients.get(socket.id);
@@ -70,6 +102,12 @@ function registerSockets(io) {
         console.log(`peer ${clientInfo.peerId} disconnected`);
         // Inform other peers that this peer has left
         socket.broadcast.emit('peer-left', { peerId: clientInfo.peerId });
+
+        // Broadcast updated presence list
+        {
+          const presenceList = Array.from(clients.values()).map((c) => ({ peerId: c.peerId, name: c.name }));
+          io.emit('presence', presenceList);
+        }
       }
     });
 
@@ -83,4 +121,13 @@ function registerSockets(io) {
   });
 }
 
-module.exports = registerSockets;
+// Return an array of the names of connected peers. This is used by
+// HTTP routes to inform the lobby which names are currently taken.
+function getOnlineNames() {
+  return Array.from(clients.values()).map((c) => c.name);
+}
+
+module.exports = {
+  registerSockets,
+  getOnlineNames
+};

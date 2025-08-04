@@ -24,6 +24,11 @@
   const muteBtn = document.getElementById('mute-btn');
   const copyLinkBtn = document.getElementById('copy-link');
 
+  // Configure the mute button to show an unmuted speaker icon by default.
+  // We will toggle the icon in the click handler below. If icons are not
+  // rendered correctly the fallback text will still make sense.
+  muteBtn.textContent = '🔈';
+
   currentUserEl.textContent = username;
 
   // Local media and analysis variables must be declared before
@@ -88,7 +93,17 @@
     list.forEach(({ peerId, name }) => {
       const li = document.createElement('li');
       li.dataset.peerId = peerId;
-      li.textContent = name;
+      // Span for the name
+      const nameSpan = document.createElement('span');
+      nameSpan.className = 'peer-name';
+      nameSpan.textContent = name;
+      // Span to display mute state
+      const muteSpan = document.createElement('span');
+      muteSpan.className = 'mute-indicator';
+      muteSpan.textContent = '🔇';
+      muteSpan.style.display = 'none';
+      li.appendChild(nameSpan);
+      li.appendChild(muteSpan);
       if (peerId === myPeerId) {
         li.classList.add('peer-self');
       }
@@ -102,11 +117,31 @@
     if (!li) {
       li = document.createElement('li');
       li.dataset.peerId = peerId;
-      li.textContent = name;
+      // Add name span and mute indicator
+      const nameSpan = document.createElement('span');
+      nameSpan.className = 'peer-name';
+      nameSpan.textContent = name;
+      const muteSpan = document.createElement('span');
+      muteSpan.className = 'mute-indicator';
+      muteSpan.textContent = '🔇';
+      muteSpan.style.display = 'none';
+      li.appendChild(nameSpan);
+      li.appendChild(muteSpan);
       peerListEl.appendChild(li);
     }
     if (peerId === myPeerId) {
       li.classList.add('peer-self');
+    }
+  }
+
+  // Update the mute indicator for a given peer
+  function updateMuteStatus(peerId, muted) {
+    const li = peerListEl.querySelector(`[data-peer-id="${peerId}"]`);
+    if (li) {
+      const muteEl = li.querySelector('.mute-indicator');
+      if (muteEl) {
+        muteEl.style.display = muted ? 'inline' : 'none';
+      }
     }
   }
 
@@ -124,6 +159,13 @@
     localDataArray = new Uint8Array(localAnalyser.frequencyBinCount);
     const source = audioCtx.createMediaStreamSource(stream);
     source.connect(localAnalyser);
+    // Local noise gate state: whether the audio track is currently enabled
+    let gated = false;
+    // Threshold above which the track is considered speaking.
+    const SPEAK_THRESHOLD = 40;
+    // Hysteresis to prevent rapid toggling (in dB/level units)
+    const THRESHOLD_OFF = SPEAK_THRESHOLD * 0.7;
+
     function analyse() {
       localAnalyser.getByteFrequencyData(localDataArray);
       let sum = 0;
@@ -131,7 +173,22 @@
         sum += localDataArray[i];
       }
       const level = sum / localDataArray.length;
-      setSpeaking(myPeerId, level > 40);
+      // Show speaking indicator on the UI regardless of mute state
+      setSpeaking(myPeerId, level > SPEAK_THRESHOLD);
+
+      // Noise gate: enable/disable the audio track based on level when not manually muted
+      const track = localStream && localStream.getAudioTracks()[0];
+      if (track && !isMuted) {
+        if (!gated && level > SPEAK_THRESHOLD) {
+          // Start sending audio
+          track.enabled = true;
+          gated = true;
+        } else if (gated && level < THRESHOLD_OFF) {
+          // Suppress audio when quiet
+          track.enabled = false;
+          gated = false;
+        }
+      }
       requestAnimationFrame(analyse);
     }
     analyse();
@@ -164,10 +221,28 @@
     }
     try {
       const stream = await navigator.mediaDevices.getUserMedia(audioConstraints);
-      localStream = stream;
+      // Apply a dynamics compressor to suppress constant background
+      // noise and level out the volume. This emulates noise
+      // suppression found in VoIP applications like Discord. We pipe
+      // the input stream through a DynamicsCompressorNode and extract
+      // the processed MediaStream from a MediaStreamDestination.
+      const ctx = new (window.AudioContext || window.webkitAudioContext)();
+      const source = ctx.createMediaStreamSource(stream);
+      const compressor = ctx.createDynamicsCompressor();
+      // Tune the compressor parameters for a gentle noise gate effect
+      compressor.threshold.setValueAtTime(-50, ctx.currentTime);
+      compressor.knee.setValueAtTime(40, ctx.currentTime);
+      compressor.ratio.setValueAtTime(12, ctx.currentTime);
+      compressor.attack.setValueAtTime(0.003, ctx.currentTime);
+      compressor.release.setValueAtTime(0.25, ctx.currentTime);
+      source.connect(compressor);
+      const destination = ctx.createMediaStreamDestination();
+      compressor.connect(destination);
+      // Use the processed stream for all WebRTC connections
+      localStream = destination.stream;
       // Log success and list of audio tracks for debugging
       console.log('getUserMedia success', stream);
-      console.log('localStream tracks', stream.getAudioTracks());
+      console.log('localStream tracks after compression', localStream.getAudioTracks());
     } catch (err) {
       console.error('getUserMedia error', err);
       if (err.name === 'NotAllowedError') {
@@ -242,29 +317,30 @@
         console.log('sent ICE candidate to', remotePeerId, event.candidate);
       }
     };
-    // When a remote track arrives, create an audio element and analyse it
-    pc.ontrack = (event) => {
-      const [stream] = event.streams;
-      // Create or update audio element for this peer
-      let audioEl = peers[remotePeerId] && peers[remotePeerId].audio;
+    // When a remote track arrives, create or update an <audio> element
+    pc.ontrack = ({ streams: [stream] }) => {
+      console.log('ontrack fired', stream);
+      // Look for an existing audio element for this peer by data attribute
+      let audioEl = document.querySelector(`[data-audio="${remotePeerId}"]`);
       if (!audioEl) {
-        audioEl = document.createElement('audio');
-        audioEl.autoplay = true;
-        audioEl.muted = false;
-        audioContainer.appendChild(audioEl);
-        // Save reference to remove later
-        if (peers[remotePeerId]) peers[remotePeerId].audio = audioEl;
+          audioEl = document.createElement('audio');
+          audioEl.dataset.audio = remotePeerId;
+          audioEl.autoplay = true;
+          audioEl.playsInline = true;
+          audioEl.muted = false;
+          document.body.appendChild(audioEl);
+          // Save reference for removal when the peer leaves
+          if (peers[remotePeerId]) {
+            peers[remotePeerId].audio = audioEl;
+          }
       }
       audioEl.srcObject = stream;
-      // Play explicitly to satisfy some browsers
-      const playPromise = audioEl.play();
-      if (playPromise && typeof playPromise.then === 'function') {
-        playPromise.catch(() => {/* ignore */});
-      }
-      // Start analysing the remote stream
-      analyseRemote(remotePeerId, stream);
-      console.log('ontrack fired', stream);
+      // Attempt to play, catching any exceptions
+      const p = audioEl.play();
+      if (p && typeof p.then === 'function') p.catch((err) => console.error(err));
       console.log('audioEl.srcObject', audioEl.srcObject);
+      // Analyse the remote stream for speaking indicator
+      analyseRemote(remotePeerId, stream);
     };
     // Log ICE connection state changes
     pc.oniceconnectionstatechange = () => {
@@ -318,10 +394,9 @@
     list.forEach(({ peerId, name }) => {
       if (peerId === myPeerId) return;
       addPeerToList(peerId, name);
-      // If we don't have a connection yet, this client will initiate
-      if (!peers[peerId]) {
-        ensurePeerConnection(peerId, name, true);
-      }
+      // Create a peer connection but do not offer; the existing
+      // participants will initiate negotiation when a new peer joins.
+      ensurePeerConnection(peerId, name, /*createOffer=*/false);
     });
   });
 
@@ -378,6 +453,15 @@
     }
   });
 
+  // Handle server rejection due to name conflict
+  socket.on('join-error', ({ message }) => {
+    alert(message || 'حدث خطأ عند الانضمام. يرجى اختيار اسم آخر.');
+    // Disconnect and go back to lobby
+    socket.disconnect();
+    sessionStorage.removeItem('username');
+    window.location.href = '/';
+  });
+
   // Re-join on reconnection
   socket.io.on('reconnect', () => {
     if (username) {
@@ -387,13 +471,24 @@
 
   // UI interactions
   muteBtn.addEventListener('click', () => {
+    // Toggle the local mute state and update track enabled flags
     isMuted = !isMuted;
     if (localStream) {
       localStream.getAudioTracks().forEach((track) => {
         track.enabled = !isMuted;
       });
     }
-    muteBtn.textContent = isMuted ? 'إلغاء الكتم' : 'كتم';
+    // Emit our mute status to other peers so they can update
+    // indicators. Only manual toggles are propagated.
+    socket.emit('mute', { muted: isMuted });
+    // Update the button appearance: show a muted or unmuted speaker icon
+    if (isMuted) {
+      muteBtn.textContent = '🔇';
+      muteBtn.classList.add('muted');
+    } else {
+      muteBtn.textContent = '🔈';
+      muteBtn.classList.remove('muted');
+    }
   });
 
   copyLinkBtn.addEventListener('click', async () => {
@@ -406,5 +501,35 @@
     } catch (err) {
       console.error('Copy to clipboard failed:', err);
     }
+  });
+
+  // Handle logout: clear session, close connections and redirect
+  const logoutBtn = document.getElementById('logout-btn');
+  logoutBtn.addEventListener('click', () => {
+    try {
+      // Close all peer connections
+      Object.values(peers).forEach(({ pc, audio }) => {
+        if (pc) pc.close();
+        if (audio && audio.parentNode) {
+          audio.srcObject = null;
+          audio.parentNode.removeChild(audio);
+        }
+      });
+      // Stop local stream
+      if (localStream) {
+        localStream.getTracks().forEach((t) => t.stop());
+      }
+      // Disconnect socket
+      socket.disconnect();
+    } catch (err) {
+      console.error('Error during logout', err);
+    }
+    sessionStorage.removeItem('username');
+    window.location.href = '/';
+  });
+
+  // Listen for mute events from other peers and update the UI
+  socket.on('mute', ({ peerId, muted }) => {
+    updateMuteStatus(peerId, muted);
   });
 })();
