@@ -22,14 +22,38 @@
   const currentUserEl = document.getElementById('current-user');
   const peerListEl = document.getElementById('peer-list');
   const muteBtn = document.getElementById('mute-btn');
-  const copyLinkBtn = document.getElementById('copy-link');
-
-  // Configure the mute button to show an unmuted speaker icon by default.
-  // We will toggle the icon in the click handler below. If icons are not
-  // rendered correctly the fallback text will still make sense.
-  muteBtn.textContent = '🔈';
+  const noiseBtn = document.getElementById('noise-btn');
 
   currentUserEl.textContent = username;
+
+  /**
+   * Apply a flashing neon effect to the main title. Wrap each
+   * character in a span with the class .neon-letter and set a
+   * random animation delay so the letters flash independently. This
+   * runs once when the room script loads.
+   */
+  function applyNeonEffect() {
+    const title = document.querySelector('.app-title');
+    if (!title || title.classList.contains('neon-applied')) return;
+    const text = title.textContent;
+    const fragments = [];
+    for (const char of text) {
+      if (char.trim() === '') {
+        fragments.push(char);
+      } else {
+        const span = document.createElement('span');
+        span.className = 'neon-letter';
+        span.textContent = char;
+        const delay = (Math.random() * 4).toFixed(2);
+        span.style.animationDelay = `-${delay}s`;
+        fragments.push(span.outerHTML);
+      }
+    }
+    title.innerHTML = fragments.join('');
+    title.classList.add('neon-applied');
+  }
+
+  applyNeonEffect();
 
   // Local media and analysis variables must be declared before
   // requestMicrophone() is called so that they exist in the scope
@@ -40,6 +64,31 @@
   let audioCtx;
   let localDataArray;
   let isMuted = false;
+  // Controller for the dynamic noise gate. It exposes an enable() method
+  // to toggle gating on and off at runtime.
+  let noiseGateController;
+  // Flag to track the current noise suppression state
+  let noiseEnabled = true;
+
+  // Play a short beep using the Web Audio API. Different frequencies can
+  // indicate different events (e.g. join vs leave). The duration is fixed
+  // at 0.2 seconds. This function is safe to call without awaiting.
+  function playBeep(frequency = 880) {
+    try {
+      const ctx = new (window.AudioContext || window.webkitAudioContext)();
+      const osc = ctx.createOscillator();
+      const gain = ctx.createGain();
+      osc.type = 'sine';
+      osc.frequency.value = frequency;
+      osc.connect(gain).connect(ctx.destination);
+      gain.gain.setValueAtTime(0.2, ctx.currentTime);
+      gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + 0.2);
+      osc.start();
+      osc.stop(ctx.currentTime + 0.2);
+    } catch (e) {
+      console.warn('Beep failed:', e);
+    }
+  }
 
   // Audio constraints
   const audioConstraints = {
@@ -60,6 +109,14 @@
   } catch (_) {
     // If requesting the microphone failed, stop initialisation.
     return;
+  }
+
+  // Noise suppression is enabled by default; update the button label
+  // accordingly. If noiseEnabled is false then the button should
+  // instruct the user to enable the noise gate. Otherwise it should
+  // instruct to disable it.
+  if (noiseBtn) {
+    noiseBtn.textContent = noiseEnabled ? 'إيقاف العزل' : 'تفعيل العزل';
   }
 
   // Hidden container for remote audio elements
@@ -87,23 +144,37 @@
     }
   }
 
+  // Update the muted status for a peer. This toggles a CSS class and
+  // shows or hides the mute icon within the list item. For the local
+  // user the same function will update their own list entry.
+  function updateMuteStatus(peerId, muted) {
+    const li = peerListEl.querySelector(`[data-peer-id="${peerId}"]`);
+    if (!li) return;
+    if (muted) {
+      li.classList.add('peer-muted');
+    } else {
+      li.classList.remove('peer-muted');
+    }
+  }
+
   // Render the entire peer list
   function renderPeerList(list) {
     peerListEl.innerHTML = '';
     list.forEach(({ peerId, name }) => {
       const li = document.createElement('li');
       li.dataset.peerId = peerId;
-      // Span for the name
+      li.classList.add('peer-entry');
+      // Name span
       const nameSpan = document.createElement('span');
       nameSpan.className = 'peer-name';
       nameSpan.textContent = name;
-      // Span to display mute state
-      const muteSpan = document.createElement('span');
-      muteSpan.className = 'mute-indicator';
-      muteSpan.textContent = '🔇';
-      muteSpan.style.display = 'none';
       li.appendChild(nameSpan);
-      li.appendChild(muteSpan);
+      // Mute icon span (hidden by default)
+      const muteIcon = document.createElement('span');
+      muteIcon.className = 'mute-icon';
+      // Leave text empty; the icon is drawn via CSS (see nexus.css)
+      muteIcon.textContent = '';
+      li.appendChild(muteIcon);
       if (peerId === myPeerId) {
         li.classList.add('peer-self');
       }
@@ -117,31 +188,19 @@
     if (!li) {
       li = document.createElement('li');
       li.dataset.peerId = peerId;
-      // Add name span and mute indicator
+      li.classList.add('peer-entry');
       const nameSpan = document.createElement('span');
       nameSpan.className = 'peer-name';
       nameSpan.textContent = name;
-      const muteSpan = document.createElement('span');
-      muteSpan.className = 'mute-indicator';
-      muteSpan.textContent = '🔇';
-      muteSpan.style.display = 'none';
       li.appendChild(nameSpan);
-      li.appendChild(muteSpan);
+      const muteIcon = document.createElement('span');
+      muteIcon.className = 'mute-icon';
+      muteIcon.textContent = '';
+      li.appendChild(muteIcon);
       peerListEl.appendChild(li);
     }
     if (peerId === myPeerId) {
       li.classList.add('peer-self');
-    }
-  }
-
-  // Update the mute indicator for a given peer
-  function updateMuteStatus(peerId, muted) {
-    const li = peerListEl.querySelector(`[data-peer-id="${peerId}"]`);
-    if (li) {
-      const muteEl = li.querySelector('.mute-indicator');
-      if (muteEl) {
-        muteEl.style.display = muted ? 'inline' : 'none';
-      }
     }
   }
 
@@ -159,13 +218,6 @@
     localDataArray = new Uint8Array(localAnalyser.frequencyBinCount);
     const source = audioCtx.createMediaStreamSource(stream);
     source.connect(localAnalyser);
-    // Local noise gate state: whether the audio track is currently enabled
-    let gated = false;
-    // Threshold above which the track is considered speaking.
-    const SPEAK_THRESHOLD = 40;
-    // Hysteresis to prevent rapid toggling (in dB/level units)
-    const THRESHOLD_OFF = SPEAK_THRESHOLD * 0.7;
-
     function analyse() {
       localAnalyser.getByteFrequencyData(localDataArray);
       let sum = 0;
@@ -173,22 +225,7 @@
         sum += localDataArray[i];
       }
       const level = sum / localDataArray.length;
-      // Show speaking indicator on the UI regardless of mute state
-      setSpeaking(myPeerId, level > SPEAK_THRESHOLD);
-
-      // Noise gate: enable/disable the audio track based on level when not manually muted
-      const track = localStream && localStream.getAudioTracks()[0];
-      if (track && !isMuted) {
-        if (!gated && level > SPEAK_THRESHOLD) {
-          // Start sending audio
-          track.enabled = true;
-          gated = true;
-        } else if (gated && level < THRESHOLD_OFF) {
-          // Suppress audio when quiet
-          track.enabled = false;
-          gated = false;
-        }
-      }
+      setSpeaking(myPeerId, level > 40);
       requestAnimationFrame(analyse);
     }
     analyse();
@@ -221,28 +258,79 @@
     }
     try {
       const stream = await navigator.mediaDevices.getUserMedia(audioConstraints);
-      // Apply a dynamics compressor to suppress constant background
-      // noise and level out the volume. This emulates noise
-      // suppression found in VoIP applications like Discord. We pipe
-      // the input stream through a DynamicsCompressorNode and extract
-      // the processed MediaStream from a MediaStreamDestination.
-      const ctx = new (window.AudioContext || window.webkitAudioContext)();
-      const source = ctx.createMediaStreamSource(stream);
-      const compressor = ctx.createDynamicsCompressor();
-      // Tune the compressor parameters for a gentle noise gate effect
-      compressor.threshold.setValueAtTime(-50, ctx.currentTime);
-      compressor.knee.setValueAtTime(40, ctx.currentTime);
-      compressor.ratio.setValueAtTime(12, ctx.currentTime);
-      compressor.attack.setValueAtTime(0.003, ctx.currentTime);
-      compressor.release.setValueAtTime(0.25, ctx.currentTime);
-      source.connect(compressor);
-      const destination = ctx.createMediaStreamDestination();
-      compressor.connect(destination);
-      // Use the processed stream for all WebRTC connections
-      localStream = destination.stream;
-      // Log success and list of audio tracks for debugging
       console.log('getUserMedia success', stream);
-      console.log('localStream tracks after compression', localStream.getAudioTracks());
+      console.log('localStream tracks', stream.getAudioTracks());
+      // Apply a dynamic noise gate based on RNNoise research. RNNoise
+      // operates on short frames (around 10 ms) and aims to suppress
+      // background noise without adding noticeable latency【28416536528651†L103-L107】. To approximate
+      // this behaviour within the browser, we create a Web Audio
+      // processing graph that analyses 10–20 ms frames and
+      // dynamically adjusts a gain node. The calibration step
+      // estimates the ambient noise floor and sets a threshold
+      // relative to that baseline. This yields a smarter gate that
+      // adapts to different environments.
+      async function createNoiseGate(micStream) {
+        try {
+          const ctx = new (window.AudioContext || window.webkitAudioContext)();
+          // Use a small FFT size (~512 samples) corresponding to ~10 ms
+          // frames at 48 kHz. This improves responsiveness and keeps
+          // latency low.
+          const analyser = ctx.createAnalyser();
+          analyser.fftSize = 512;
+          const source = ctx.createMediaStreamSource(micStream);
+          const gainNode = ctx.createGain();
+          source.connect(gainNode);
+          gainNode.connect(analyser);
+          const dest = ctx.createMediaStreamDestination();
+          gainNode.connect(dest);
+          const data = new Uint8Array(analyser.fftSize);
+          let baseline = 0;
+          let frameCount = 0;
+          let calibrating = true;
+          let enabled = true;
+          function update() {
+            analyser.getByteTimeDomainData(data);
+            let sumSquares = 0;
+            for (let i = 0; i < data.length; i++) {
+              const v = (data[i] - 128) / 128;
+              sumSquares += v * v;
+            }
+            const rms = Math.sqrt(sumSquares / data.length);
+            if (calibrating) {
+              baseline += rms;
+              frameCount++;
+              // Calibrate for the first ~300 ms (30 frames of 10 ms)
+              if (frameCount > 30) {
+                baseline = baseline / frameCount;
+                calibrating = false;
+              }
+            }
+            const threshold = baseline * 1.5;
+            const targetGain = !enabled || rms > threshold ? 1 : 0;
+            gainNode.gain.setTargetAtTime(targetGain, ctx.currentTime, 0.02);
+            requestAnimationFrame(update);
+          }
+          update();
+          ctx.resume().catch(() => {});
+          return {
+            processed: dest.stream,
+            enable(flag) {
+              enabled = flag;
+            },
+            ctx
+          };
+        } catch (e) {
+          console.warn('Noise gate setup failed', e);
+          return {
+            processed: micStream,
+            enable() {},
+            ctx: null
+          };
+        }
+      }
+      // Create the gate and set the processed stream as the localStream
+      noiseGateController = await createNoiseGate(stream);
+      localStream = noiseGateController.processed;
     } catch (err) {
       console.error('getUserMedia error', err);
       if (err.name === 'NotAllowedError') {
@@ -271,13 +359,64 @@
   navigator.mediaDevices.addEventListener('devicechange', async () => {
     try {
       const newStream = await navigator.mediaDevices.getUserMedia(audioConstraints);
-      const newTrack = newStream.getAudioTracks()[0];
+      // Apply a new noise gate to the replaced stream
+      noiseGateController = await (async () => {
+        // Use the same createNoiseGate function defined above
+        const ctx = new (window.AudioContext || window.webkitAudioContext)();
+        const analyser = ctx.createAnalyser();
+        analyser.fftSize = 512;
+        const source = ctx.createMediaStreamSource(newStream);
+        const gainNode = ctx.createGain();
+        source.connect(gainNode);
+        gainNode.connect(analyser);
+        const dest = ctx.createMediaStreamDestination();
+        gainNode.connect(dest);
+        const data = new Uint8Array(analyser.fftSize);
+        let baseline = 0;
+        let frameCount = 0;
+        let calibrating = true;
+        let enabled = noiseEnabled;
+        function update() {
+          analyser.getByteTimeDomainData(data);
+          let sumSquares = 0;
+          for (let i = 0; i < data.length; i++) {
+            const v = (data[i] - 128) / 128;
+            sumSquares += v * v;
+          }
+          const rms = Math.sqrt(sumSquares / data.length);
+          if (calibrating) {
+            baseline += rms;
+            frameCount++;
+            if (frameCount > 30) {
+              baseline = baseline / frameCount;
+              calibrating = false;
+            }
+          }
+          const threshold = baseline * 1.5;
+          const targetGain = !enabled || rms > threshold ? 1 : 0;
+          gainNode.gain.setTargetAtTime(targetGain, ctx.currentTime, 0.02);
+          requestAnimationFrame(update);
+        }
+        update();
+        ctx.resume().catch(() => {});
+        return {
+          processed: dest.stream,
+          enable(flag) {
+            enabled = flag;
+          },
+          ctx
+        };
+      })();
+      const gated = noiseGateController.processed;
       // Replace the track on all senders
+      const newTrack = gated.getAudioTracks()[0];
       replaceTrack(newTrack);
       // Stop old tracks and update the local reference
-      localStream.getTracks().forEach((t) => t.stop());
-      localStream = newStream;
-      startLocalAnalysis(newStream);
+      if (localStream) {
+        localStream.getTracks().forEach((t) => t.stop());
+      }
+      localStream = gated;
+      startLocalAnalysis(gated);
     } catch (err) {
       console.error('Error while handling device change:', err);
     }
@@ -404,6 +543,8 @@
     addPeerToList(peerId, name);
     // Initiate a connection to the new peer
     ensurePeerConnection(peerId, name, true);
+    // Play a short tone to indicate someone joined
+    playBeep(880);
   });
 
   socket.on('peer-left', ({ peerId }) => {
@@ -420,6 +561,28 @@
       }
       delete peers[peerId];
     }
+    // Play a lower tone to indicate someone left
+    playBeep(440);
+  });
+
+  // If the server rejects our name because it is already in use, alert the
+  // user and redirect back to the lobby. This should rarely happen because
+  // the lobby prevents selecting occupied names, but it serves as a safety
+  // net for race conditions.
+  socket.on('join-error', ({ message }) => {
+    alert(message || 'الاسم غير متاح');
+    // Clean up local resources
+    if (localStream) {
+      localStream.getTracks().forEach((t) => t.stop());
+    }
+    socket.disconnect();
+    sessionStorage.removeItem('username');
+    window.location.href = '/';
+  });
+
+  // Update the UI when a remote peer mutes or unmutes themselves
+  socket.on('mute', ({ peerId, muted }) => {
+    updateMuteStatus(peerId, muted);
   });
 
   socket.on('signal', async ({ from, data }) => {
@@ -453,15 +616,6 @@
     }
   });
 
-  // Handle server rejection due to name conflict
-  socket.on('join-error', ({ message }) => {
-    alert(message || 'حدث خطأ عند الانضمام. يرجى اختيار اسم آخر.');
-    // Disconnect and go back to lobby
-    socket.disconnect();
-    sessionStorage.removeItem('username');
-    window.location.href = '/';
-  });
-
   // Re-join on reconnection
   socket.io.on('reconnect', () => {
     if (username) {
@@ -471,36 +625,30 @@
 
   // UI interactions
   muteBtn.addEventListener('click', () => {
-    // Toggle the local mute state and update track enabled flags
     isMuted = !isMuted;
     if (localStream) {
       localStream.getAudioTracks().forEach((track) => {
         track.enabled = !isMuted;
       });
     }
-    // Emit our mute status to other peers so they can update
-    // indicators. Only manual toggles are propagated.
+    // Update the button label
+    muteBtn.textContent = isMuted ? 'إلغاء الكتم' : 'كتم';
+    // Update our own list entry
+    updateMuteStatus(myPeerId, isMuted);
+    // Notify other peers of our mute state
     socket.emit('mute', { muted: isMuted });
-    // Update the button appearance: show a muted or unmuted speaker icon
-    if (isMuted) {
-      muteBtn.textContent = '🔇';
-      muteBtn.classList.add('muted');
-    } else {
-      muteBtn.textContent = '🔈';
-      muteBtn.classList.remove('muted');
-    }
   });
 
-  copyLinkBtn.addEventListener('click', async () => {
-    try {
-      await navigator.clipboard.writeText(window.location.href);
-      copyLinkBtn.textContent = 'تم النسخ';
-      setTimeout(() => {
-        copyLinkBtn.textContent = 'نسخ الرابط';
-      }, 2000);
-    } catch (err) {
-      console.error('Copy to clipboard failed:', err);
+  // Toggle noise suppression on or off. When the gate is disabled, audio
+  // passes through unprocessed. When enabled, the dynamic gate runs
+  // continuously to attenuate background noise. Update the button
+  // label to reflect the current state.
+  noiseBtn.addEventListener('click', () => {
+    noiseEnabled = !noiseEnabled;
+    if (noiseGateController) {
+      noiseGateController.enable(noiseEnabled);
     }
+    noiseBtn.textContent = noiseEnabled ? 'إيقاف العزل' : 'تفعيل العزل';
   });
 
   // Handle logout: clear session, close connections and redirect
@@ -526,10 +674,5 @@
     }
     sessionStorage.removeItem('username');
     window.location.href = '/';
-  });
-
-  // Listen for mute events from other peers and update the UI
-  socket.on('mute', ({ peerId, muted }) => {
-    updateMuteStatus(peerId, muted);
   });
 })();

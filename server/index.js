@@ -10,7 +10,7 @@ const {
   ICE_SERVERS,
   ICE_POLICY
 } = require('./config');
-const { registerSockets, getOnlineNames } = require('./sockets');
+const registerSockets = require('./sockets');
 
 /*
  * Entry point for the Nexus Voice server.
@@ -40,13 +40,6 @@ app.use(morgan('dev'));
 // Expose ICE configuration to the frontend
 app.get('/ice-config', (req, res) => {
   res.json({ iceServers: ICE_SERVERS, icePolicy: ICE_POLICY });
-});
-
-// Endpoint to return the list of online user names. Used by the lobby
-// to display who is currently connected and to disable already chosen
-// names.
-app.get('/online-users', (req, res) => {
-  res.json(getOnlineNames());
 });
 
 // Catch-all: serve the lobby page for any unknown route. This makes direct

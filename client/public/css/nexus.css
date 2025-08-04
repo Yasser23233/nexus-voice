@@ -53,7 +53,42 @@ html, body {
   font-weight: 700;
   letter-spacing: 1px;
   position: relative;
-  animation: glitch 3s infinite;
+  /* The base title uses a subtle glow. Individual letters will
+     override this via the .neon-letter class when the neon effect
+     script runs. */
+  text-shadow: 0 0 6px var(--accent-color);
+}
+
+/* Neon flashing effect for each letter of the title. When applied,
+   each span flickers at random intervals to simulate a malfunctioning
+   neon sign.  The animation toggles opacity and text-shadow to
+   achieve the flashing look. We rely on JavaScript to assign a
+   random animation delay to each .neon-letter element. */
+.neon-letter {
+  display: inline-block;
+  animation-name: neonFlash;
+  animation-duration: 4s;
+  animation-iteration-count: infinite;
+  animation-timing-function: linear;
+}
+
+@keyframes neonFlash {
+  0%, 78%, 100% {
+    opacity: 1;
+    text-shadow: 0 0 8px var(--accent-color), 0 0 12px var(--accent-color);
+  }
+  80%, 82% {
+    opacity: 0.4;
+    text-shadow: none;
+  }
+  84%, 86% {
+    opacity: 0.8;
+    text-shadow: 0 0 4px var(--accent-color);
+  }
+  88%, 90% {
+    opacity: 1;
+    text-shadow: 0 0 10px var(--accent-color);
+  }
 }
 
 .instruction {
@@ -82,69 +117,95 @@ html, body {
   justify-content: space-between;
 }
 
-/* Indicate that a name is already taken in the lobby. Dim the text and
-   show a green status dot. Disable pointer events to prevent clicks. */
-.name-list li.online {
-  color: #555;
-  cursor: default;
-  opacity: 0.6;
-  pointer-events: none;
-}
-.name-list li.online::before {
-  content: '●';
-  color: #00c853;
-  margin-left: 0.5rem;
-}
-
-/* Hide the copy-link button on small screens */
-@media (max-width: 600px) {
-  #copy-link {
-    display: none;
-  }
-}
-
-/* Hide the deprecated mute indicator on peer list items. We now use a
-   dedicated span element (.mute-indicator) added via JavaScript to
-   display mute status. */
-/* .peer-list li.peer-muted::after { ... } removed */
-
-/* Disabled names in the lobby cannot be selected */
-.name-list li.disabled {
-  opacity: 0.5;
-  cursor: default;
-  pointer-events: none;
-}
-
-/* Small dot indicating online status */
-.status-dot {
-  display: inline-block;
-  width: 8px;
-  height: 8px;
-  border-radius: 50%;
-  margin-left: 0.5rem;
-  background-color: #555;
-}
-
-/* When a user is online, the dot turns green */
-.name-list li.online .status-dot {
-  background-color: #00c853;
-}
-
-/* Mute indicator next to peer names */
-.mute-indicator {
-  margin-left: 0.5rem;
-  font-size: 0.9rem;
-  color: #d50000; /* red for mute */
-}
-
 .name-list li:hover {
   background-color: var(--accent-color);
   color: var(--bg-color);
 }
 
+/* Presence indicator for lobby names */
+.presence-indicator {
+  display: inline-block;
+  width: 0.6rem;
+  height: 0.6rem;
+  border-radius: 50%;
+  margin-left: 0.5rem;
+  margin-right: 0.5rem;
+  background-color: #444;
+  flex-shrink: 0;
+}
+
+/* When a name is currently online, show green indicator and disable selection */
+.name-list li.online .presence-indicator {
+  background-color: #2ecc71;
+}
+
+.name-list li.online {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+/* Style for mute indicator within the peer list */
+/*
+ * Custom mute indicator
+ *
+ * Instead of using a prebuilt emoji or font icon, we draw our own
+ * minimalist mute symbol purely with CSS. The indicator is a small
+ * circular outline containing a golden "X" that represents a muted
+ * microphone. It inherits the accent colour defined in :root so it
+ * harmonises with the rest of the UI. The element itself is hidden
+ * until its parent list item has the .peer‑muted class. This
+ * approach avoids external icon dependencies and ensures the same
+ * appearance on all devices.
+ */
+.mute-icon {
+  position: relative;
+  width: 0.8rem;
+  height: 0.8rem;
+  margin-left: 0.5rem;
+  border: 1px solid var(--accent-color);
+  border-radius: 50%;
+  flex-shrink: 0;
+  display: none;
+}
+
+/* Draw the two diagonal lines for the X */
+.mute-icon::before,
+.mute-icon::after {
+  content: '';
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  width: 70%;
+  height: 2px;
+  background-color: var(--accent-color);
+  transform-origin: center;
+}
+
+.mute-icon::before {
+  transform: translate(-50%, -50%) rotate(45deg);
+}
+
+.mute-icon::after {
+  transform: translate(-50%, -50%) rotate(-45deg);
+}
+
+/* Show the mute icon when the peer is muted */
+.peer-list li.peer-muted .mute-icon {
+  display: inline-block;
+}
+
+/* Previously the copy link button was hidden on mobile, but to unify
+   features across devices we keep all buttons visible on all screen
+   sizes. Remove any media query hiding copy-link. */
+
 /* Speaking indicator: subtle glow around speaking peers */
 .peer-list li.peer-speaking {
   box-shadow: 0 0 8px var(--accent-color);
+}
+
+/* When a peer is muted dim their name text */
+.peer-list li.peer-muted .peer-name {
+  opacity: 0.5;
 }
 
 /* Highlight the current user with a thicker border */
@@ -180,17 +241,6 @@ html, body {
   display: inline-block;
   font-weight: bold;
   margin-top: 0.5rem;
-}
-
-/* Responsive design: adjust layout and hide copy link on small screens */
-@media (max-width: 600px) {
-  .container {
-    padding: 1rem 0.5rem;
-    max-width: 100%;
-  }
-  #copy-link {
-    display: none;
-  }
 }
 
 @keyframes glow {
